@@ -15,9 +15,10 @@ from tensorflow.keras.callbacks import TensorBoard
 import datetime
 
 class LSTMTry():
-    def __init__(self, default_model_folder='./fitted/', default_data_folder='./data/', inp_len=180, out_len=1):
+    def __init__(self, default_model_folder='./fitted/', default_data_folder='./data/', inp_len=180, out_len=1, timestap=10, testfile="10s-test.json"):
         self.inp_len = inp_len
         self.out_len = out_len
+        self.test_file = testfile
         self.raw_data = None
         self.model = None
         self.model_callbacks = None
@@ -26,7 +27,7 @@ class LSTMTry():
         self.scaler = MinMaxScaler()
         self.data_folder = default_data_folder
         self.model_folder = default_model_folder
-        self.get_full_from_folder()
+        self.get_full_from_folder(timestap=timestap)
         self.get_data_to_fit()
         self.setup_callback()
 
@@ -186,7 +187,7 @@ class LSTMTry():
         # juasgdkljhagsdlkjighas;
 
     def model_predict(self):
-        self.get_data_to_fit(self.get_one_from_file())
+        self.get_data_to_fit(self.get_one_from_file(filename=self.test_file))
         for i in range(40):
             number_to_try = i + 20
             x = np.array([self.train_data[number_to_try]])
@@ -211,5 +212,6 @@ class LSTMTry():
         print(valid_data.shape)
         self.model.fit(train_data, valid_data, batch_size=32, epochs=50, callbacks=self.model_callbacks)
 
-net = LSTMTry(default_model_folder='./models/fitted10s/', default_data_folder='./candelsticks/10s/', inp_len=180, out_len=1)
+# net = LSTMTry(default_model_folder='./models/fitted10s/', default_data_folder='./canelsticks/10s/', inp_len=180, out_len=1)
+net = LSTMTry(default_model_folder='./models/fitted5m/', default_data_folder='./canelsticks/5m/', inp_len=180, out_len=1, timestap=60*5)
 net.what_we_do()

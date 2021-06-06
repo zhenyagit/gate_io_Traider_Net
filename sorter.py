@@ -9,7 +9,7 @@ class Sorter():
         self.folder_path = path_candelsticks
         self.nametype = nametype
         if save_folder == None:
-            self.save_folder = os.path.join(self.folder_path, nametype)
+            self.save_folder = os.path.join(nametype)
         if not os.path.exists(self.save_folder):
             os.mkdir(self.save_folder)
         self.all_data_dic = []
@@ -36,8 +36,14 @@ class Sorter():
                             temp.append(float(data[lineindex][i + 1]))
                         self.all_data_dic.append(temp)
         self.all_data_dic = sorted(self.all_data_dic, key=lambda time: time[0])
+        print("len of", self.nametype,": ", len( self.all_data_dic))
+
         with open(self.save_folder + '/all_in_one.json', 'w', encoding='utf-8') as file:
             json.dump(self.all_data_dic, file, ensure_ascii=False)
 
 
-sor = Sorter("1d", "./canelsticks/")
+
+sor = Sorter("1d", "./canelsticks/all/")
+sor = Sorter("1h", "./canelsticks/all/")
+sor = Sorter("5m", "./canelsticks/all/")
+sor = Sorter("10s", "./canelsticks/all/")
