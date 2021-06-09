@@ -43,7 +43,7 @@ class Sorter():
 
 
 
-sor = Sorter("1d", "./canelsticks/all/")
-sor = Sorter("1h", "./canelsticks/all/")
-sor = Sorter("5m", "./canelsticks/all/")
+# sor = Sorter("1d", "./canelsticks/all/")
+# sor = Sorter("1h", "./canelsticks/all/")
+# sor = Sorter("5m", "./canelsticks/all/")
 sor = Sorter("10s", "./canelsticks/all/")

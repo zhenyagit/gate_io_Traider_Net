@@ -2,16 +2,19 @@ import os
 from matplotlib import pyplot as plt
 import json
 import numpy as np
-
+import random
+from LSTM_net import OnlyNet
 
 class CandlestickDataCollectorLSTM:
-    def __init__(self, data_folder="./10s/", inp_len=180, out_len=1):
+    def __init__(self, data_folder="./10s/", model_folder="./models/fitted10s/", inp_len=180, out_len=1):
         self.raw_data = None
         self.out_len = out_len
         self.inp_len = inp_len
         self.data_folder = data_folder
         self.get_full_from_folder()
         self.draw_array_candlestick(self.ret_data_to_LSTM(time=1622548887))
+        self.model_folder = model_folder
+        self.net = OnlyNet(self.model_folder)
         # self.draw_momentum_data()
 
     def ret_raw_data(self):
@@ -43,6 +46,10 @@ class CandlestickDataCollectorLSTM:
         index = np.argmin(delta)
         return array_full[index - self.inp_len:index]
 
+    def prediction_LSTM(self, time):
+        x = self.ret_data_to_LSTM(time)
+        return self.net.prediction(x)
+
     @staticmethod
     def convert_to_LSTM(array, data_to_take=2):
         return np.array(array)[:, data_to_take]
@@ -52,6 +59,7 @@ class CandlestickDataCollectorLSTM:
             array = self.raw_data
         plt.plot(np.array(array)[:, 0], np.array(array)[:, 2], marker='8', color='b')
         plt.show()
+
 
 
 class MomentumData:
@@ -130,22 +138,41 @@ class MomentumDataCollector:
         plt.show()
 
 
+class Order:
+    def __init__(self, time, price, qtty, sell_buy):
+        self.time = time
+        self.price = price
+        self.sell_buy = sell_buy
+        self.qtty = qtty
+        self.success = False
+
+    def check(self, now_price):
+        if self.sell_buy is True:
+            if now_price < self.price:
+                self.success = True
+        else:
+            if now_price > self.price:
+                self.success = True
+        return self.success
+
 class EnvironmentGateIO:
-    def __init__(self, money_USDT, money_CRYP, start_price, start_time=1622332800, momentum_folder="./momentum/", days_folder='./1d/', hours_folder='./1h/', minutes_folder='./5m/', seconds_folder='./10s/'):
-        self.start_time = start_time
+    def __init__(self, money_USDT, money_CRYP,  time_interval=60*60*2, momentum_folder="./momentum/",
+                 days_folder='./1d/', hours_folder='./1h/', minutes_folder='./5m/', model_folder="./models/fitted",
+                 seconds_folder='./10s/'):
+        self.start_time = 1622332800
+        self.time_interval = time_interval
         self.money_USDT = money_USDT
         self.money_CRYP = money_CRYP
-        self.start_price = start_price
-        self.start_score = money_USDT + money_CRYP * start_price
         self.momentum_folder = momentum_folder
         self.days_folder = days_folder
         self.hours_folder = hours_folder
         self.minutes_folder = minutes_folder
         self.seconds_folder = seconds_folder
+        self.model_folder = model_folder
         # self.candle1d = CandlestickDataCollectorLSTM(data_folder=self.days_folder)
-        self.candle1h = CandlestickDataCollectorLSTM(data_folder=self.hours_folder)
-        self.candle5m = CandlestickDataCollectorLSTM(data_folder=self.minutes_folder)
-        self.candle10s = CandlestickDataCollectorLSTM(data_folder=self.seconds_folder)
+        self.candle1h = CandlestickDataCollectorLSTM(data_folder=self.hours_folder, model_folder=self.model_folder+self.hours_folder+"/")
+        self.candle5m = CandlestickDataCollectorLSTM(data_folder=self.minutes_folder, model_folder=self.model_folder+self.minutes_folder+"/")
+        self.candle10s = CandlestickDataCollectorLSTM(data_folder=self.seconds_folder, model_folder=self.model_folder+self.seconds_folder+"/")
         self.moment = MomentumDataCollector(data_folder=self.momentum_folder)
         self.now_money_USDT = None
         self.now_money_CRYP = None
@@ -153,19 +180,71 @@ class EnvironmentGateIO:
         self.now_time = None
         self.now_moment = None
         self.now_score = None
+        self.start_price = None
+        self.start_score = None
+        self.orders = []
+        self.success_orders = []
+        self.time_can_use = []
+        self.check_time_intervals_momentum()
 
     def reset(self):
+        self.start_time = random.choice(self.time_can_use)
         self.now_time = self.start_time
         self.now_money_USDT = self.money_USDT
         self.now_money_CRYP = self.money_CRYP
+        self.now_score = self.start_score
+        observ = self.generate_observation()
+        self.start_price = self.now_moment.price
+        self.calculate_reward_score()
+        self.orders = []
+        self.success_orders = []
+        return observ
+
+    def buy(self, qtty=1):
+        if self.now_money_USDT >= qtty:
+            self.now_money_USDT -= qtty
+        self.orders.append(Order(self.now_time, self.now_price, qtty, False))
+
+    def sell(self, qtty=1):
+        if self.now_money_CRYP*self.now_price >= qtty:
+            self.now_money_CRYP -= qtty / self.now_price
+        self.orders.append(Order(self.now_time, self.now_price, qtty, True))
+
+    def step(self, action):
+        self.check_orders()
+        if action == 0:
+            self.sell()
+        if action == 1:
+            self.buy()
+        if action == 2:
+            pass
+        self.now_time += 1
+        reward = self.calculate_reward_score()
+        observation = self.generate_observation()
+        done = self.check_done()
+        info = None
+        return observation, reward, done, info
+
+    def check_done(self):
+        return self.now_time > self.start_time + self.time_interval
+
+
+    def generate_observation(self):
         self.now_moment = self.moment.ret_momentum(self.now_time)
         self.now_price = self.now_moment.price
-        self.now_score = self.start_score
         out_observ = []
-        money = self.now_money_USDT/(self.now_money_USDT+self.now_money_CRYP*self.start_price)
-        out_observ.append(self.candle1h.ret_data_to_LSTM(time=self.now_time))
-        out_observ.append(self.candle5m.ret_data_to_LSTM(time=self.now_time))
-        out_observ.append(self.candle10s.ret_data_to_LSTM(time=self.now_time))
+        summ_in_order_usdt = 0
+        summ_in_order_cryp = 0
+        for order in self.orders:
+            if order.sell_buy is False:
+                summ_in_order_usdt += order.qtty
+            else:
+                summ_in_order_cryp += order.qtty / order.price * self.now_price
+        money = (self.now_money_USDT+summ_in_order_usdt) / (self.now_money_USDT + summ_in_order_usdt +
+                                                            self.now_money_CRYP * self.now_price + summ_in_order_cryp)
+        out_observ.append(self.candle1h.prediction_LSTM(time=self.now_time))
+        out_observ.append(self.candle5m.prediction_LSTM(time=self.now_time))
+        out_observ.append(self.candle10s.prediction_LSTM(time=self.now_time))
         out_observ.append(self.now_score)
         out_observ.append(money)
         out_observ.append(self.now_moment.asks_sum)
@@ -174,20 +253,45 @@ class EnvironmentGateIO:
         out_observ.append(self.now_moment.bids_sum)
         out_observ.append(self.now_moment.bids_mean)
         out_observ.append(self.now_moment.bids_disp)
-        out_observ.append(self.now_time)
+        out_observ.append(np.sin(self.now_time % (60*60*24)*np.pi*2/(60*60*24)))
         out_observ.append(self.now_moment.price)
-
         # [LSTM1h,LSTM5m,LSTM10s,score,money,asks*3,bids*3,time,price]
         return out_observ
 
-    def buy(self, qtty=1):
+    def calculate_reward_score(self):
+        temp_score = self.now_money_USDT + self.now_money_USDT * self.start_price + self.calculate_money_in_orders()
+        reward = temp_score - self.now_score
+        self.now_score = temp_score
+        return reward
 
-    def step(self, action):
+    def calculate_money_in_orders(self):
+        summ = 0
+        for order in self.orders:
+            if order.sell_buy is False:
+                summ += order.qtty
+            else:
+                summ += order.qtty / order.price * self.now_price
+        return summ
 
+    def check_orders(self, fee=0.0018):
+        i = 0
+        while i < len(self.orders):
+            if self.orders[i].check(self.now_price):
+                self.success_orders.append(self.orders.pop(i))
+                if self.orders[i].sell_by:
+                    self.now_money_USDT += self.orders[i].qtty - self.orders[i].qtty * fee
+                else:
+                    self.now_money_CRYP += self.orders[i].qtty / self.now_price - \
+                                           (self.orders[i].qtty / self.now_price) * fee
+            i += 1
 
+    def check_time_intervals_momentum(self):
+        times = np.array(self.moment.file_list)[:, 1]
+        for i in range(len(times) - self.time_interval-1):
+            check = False
+            for k in range(self.time_interval):
+                if times[i+self.time_interval-k+1] - times[i+self.time_interval-k]> 8:
+                    check = True
+            if check is False:
+                self.time_can_use.append(i+self.time_interval)
 
-
-
-d = CandlestickDataCollectorLSTM()
-dm = MomentumDataCollector()
-mom = dm.ret_momentum(1622548887)
