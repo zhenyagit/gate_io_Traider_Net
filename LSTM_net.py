@@ -29,8 +29,7 @@ class OnlyNet:
         return load_model(self.model_folder + list_model[model_index])
 
     def prediction(self, x):
-        x = np.array([x])
-        u = np.reshape(x, (x.shape[0], x.shape[1], 1))
+        u = np.reshape(x, (1, x.shape[0], 1))
         y = self.model.predict(x)[0][0]
         return y
 

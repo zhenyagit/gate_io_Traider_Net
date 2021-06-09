@@ -20,6 +20,7 @@ def profile(func):
 class CandlestickDataCollectorLSTM:
     def __init__(self, data_folder="./10s/", model_folder="./models/fitted10s/", index_file=None, inp_len=180, out_len=1):
         self.raw_data = None
+        self.raw_data_times = None
         self.out_len = out_len
         self.inp_len = inp_len
         self.data_folder = data_folder
@@ -47,18 +48,17 @@ class CandlestickDataCollectorLSTM:
                     line.append(float(numberinline))
                 full_array.append(line)
         full_array = sorted(full_array, key=lambda time: time[0])
-        self.raw_data = full_array
+        self.raw_data = np.array(full_array)[:, 2]
+        self.raw_data_times = np.array(full_array)[:, 0]
 
     def ret_data_to_LSTM(self, time, array_full=None):
-        if array_full == None:
+        if array_full is None:
             array_full = self.raw_data
         func = np.vectorize(lambda x: abs(x - time))
-        delta = func(np.array(array_full)[:, 0])
+        delta = func(self.raw_data_times)
         index = np.argmin(delta)
-        ret_array = np.array(array_full[index - self.inp_len - 1:index])[:, 2]
-        new_arr = []
-        for i in range(len(ret_array)-1):
-            new_arr.append(ret_array[i] - ret_array[i+1])
+        ret_array = array_full[index - self.inp_len - 1:index]
+        new_arr = ret_array[:-1] - ret_array[1:]
         return new_arr
 
     def prediction_LSTM(self, time):
@@ -72,7 +72,7 @@ class CandlestickDataCollectorLSTM:
     def draw_array_candlestick(self, array=None):
         if array is None:
             array = self.raw_data
-        plt.plot(np.array(array)[:, 0], np.array(array)[:, 2], marker='8', color='b')
+        plt.plot(self.raw_data_times, self.raw_data, marker='8', color='b')
         plt.show()
 
 
