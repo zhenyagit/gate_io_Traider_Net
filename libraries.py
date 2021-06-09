@@ -4,17 +4,29 @@ import json
 import numpy as np
 import random
 from LSTM_net import OnlyNet
+import cProfile
+
+def profile(func):
+    """Decorator for run function profile"""
+    def wrapper(*args, **kwargs):
+        profile_filename = func.__name__ + '.prof'
+        profiler = cProfile.Profile()
+        result = profiler.runcall(func, *args, **kwargs)
+        profiler.dump_stats(profile_filename)
+        return result
+    return wrapper
+
 
 class CandlestickDataCollectorLSTM:
-    def __init__(self, data_folder="./10s/", model_folder="./models/fitted10s/", inp_len=180, out_len=1):
+    def __init__(self, data_folder="./10s/", model_folder="./models/fitted10s/", index_file=None, inp_len=180, out_len=1):
         self.raw_data = None
         self.out_len = out_len
         self.inp_len = inp_len
         self.data_folder = data_folder
         self.get_full_from_folder()
-        self.draw_array_candlestick(self.ret_data_to_LSTM(time=1622548887))
+        # self.draw_array_candlestick(self.ret_data_to_LSTM(time=1622548887))
         self.model_folder = model_folder
-        self.net = OnlyNet(self.model_folder)
+        self.net = OnlyNet(self.model_folder, index_file)
         # self.draw_momentum_data()
 
     def ret_raw_data(self):
@@ -38,13 +50,16 @@ class CandlestickDataCollectorLSTM:
         self.raw_data = full_array
 
     def ret_data_to_LSTM(self, time, array_full=None):
-        index = 0
         if array_full == None:
             array_full = self.raw_data
         func = np.vectorize(lambda x: abs(x - time))
         delta = func(np.array(array_full)[:, 0])
         index = np.argmin(delta)
-        return array_full[index - self.inp_len:index]
+        ret_array = np.array(array_full[index - self.inp_len - 1:index])[:, 2]
+        new_arr = []
+        for i in range(len(ret_array)-1):
+            new_arr.append(ret_array[i] - ret_array[i+1])
+        return new_arr
 
     def prediction_LSTM(self, time):
         x = self.ret_data_to_LSTM(time)
@@ -110,6 +125,8 @@ class MomentumDataCollector:
         func = np.vectorize(lambda x: abs(x - time))
         delta = func(np.array(array)[:, 1])
         index = np.argmin(delta)
+        if (array[index][0] % 1) == 0.0:
+            array[index][0] = int(array[index][0])
         file_name = str(array[index][0]) + "-" + str(array[index][1]) + ".json"
         raw_asks, raw_bids = self.ret_file_data(file_name)
         temp = []
@@ -157,8 +174,9 @@ class Order:
 
 class EnvironmentGateIO:
     def __init__(self, money_USDT, money_CRYP,  time_interval=60*60*2, momentum_folder="./momentum/",
-                 days_folder='./1d/', hours_folder='./1h/', minutes_folder='./5m/', model_folder="./models/fitted",
-                 seconds_folder='./10s/'):
+                 days_folder='./1d/', hours_folder='./1h/', minutes_folder='./5m/', seconds_folder='./10s/',
+                 model_folder1h="./models/fitted1h/", model_folder5m="./models/fitted5m/",
+                 model_folder10s="./models/fitted10s/"):
         self.start_time = 1622332800
         self.time_interval = time_interval
         self.money_USDT = money_USDT
@@ -168,11 +186,13 @@ class EnvironmentGateIO:
         self.hours_folder = hours_folder
         self.minutes_folder = minutes_folder
         self.seconds_folder = seconds_folder
-        self.model_folder = model_folder
+        self.model_folder1h = model_folder1h
+        self.model_folder5m = model_folder5m
+        self.model_folder10s = model_folder10s
         # self.candle1d = CandlestickDataCollectorLSTM(data_folder=self.days_folder)
-        self.candle1h = CandlestickDataCollectorLSTM(data_folder=self.hours_folder, model_folder=self.model_folder+self.hours_folder+"/")
-        self.candle5m = CandlestickDataCollectorLSTM(data_folder=self.minutes_folder, model_folder=self.model_folder+self.minutes_folder+"/")
-        self.candle10s = CandlestickDataCollectorLSTM(data_folder=self.seconds_folder, model_folder=self.model_folder+self.seconds_folder+"/")
+        self.candle1h = CandlestickDataCollectorLSTM(data_folder=self.hours_folder, model_folder=self.model_folder1h, index_file=100)
+        self.candle5m = CandlestickDataCollectorLSTM(data_folder=self.minutes_folder, model_folder=self.model_folder5m, index_file=100)
+        self.candle10s = CandlestickDataCollectorLSTM(data_folder=self.seconds_folder, model_folder=self.model_folder10s, index_file=90)
         self.moment = MomentumDataCollector(data_folder=self.momentum_folder)
         self.now_money_USDT = None
         self.now_money_CRYP = None
@@ -185,19 +205,24 @@ class EnvironmentGateIO:
         self.orders = []
         self.success_orders = []
         self.time_can_use = []
+        print("Start check intervals")
         self.check_time_intervals_momentum()
+        print("Stop check intervals")
 
     def reset(self):
-        self.start_time = random.choice(self.time_can_use)
-        self.now_time = self.start_time
-        self.now_money_USDT = self.money_USDT
-        self.now_money_CRYP = self.money_CRYP
-        self.now_score = self.start_score
-        observ = self.generate_observation()
-        self.start_price = self.now_moment.price
-        self.calculate_reward_score()
         self.orders = []
         self.success_orders = []
+        self.start_time = random.choice(self.time_can_use)
+        self.now_time = self.start_time
+        self.now_moment = self.moment.ret_momentum(self.now_time)
+        self.now_price = self.now_moment.price
+        self.start_price = self.now_moment.price
+        self.now_money_USDT = self.money_USDT
+        self.now_money_CRYP = self.money_CRYP
+        self.now_score = 0
+        self.calculate_reward_score()
+        self.start_score = self.now_score
+        observ = self.generate_observation()
         return observ
 
     def buy(self, qtty=1):
@@ -222,12 +247,15 @@ class EnvironmentGateIO:
         reward = self.calculate_reward_score()
         observation = self.generate_observation()
         done = self.check_done()
-        info = None
+        info = self.calculate_progress()
         return observation, reward, done, info
 
     def check_done(self):
         return self.now_time > self.start_time + self.time_interval
 
+    def calculate_progress(self):
+        progress = (self.now_time - self.start_time) / self.time_interval * 100
+        return progress
 
     def generate_observation(self):
         self.now_moment = self.moment.ret_momentum(self.now_time)
@@ -256,10 +284,10 @@ class EnvironmentGateIO:
         out_observ.append(np.sin(self.now_time % (60*60*24)*np.pi*2/(60*60*24)))
         out_observ.append(self.now_moment.price)
         # [LSTM1h,LSTM5m,LSTM10s,score,money,asks*3,bids*3,time,price]
-        return out_observ
+        return np.array(out_observ)
 
     def calculate_reward_score(self):
-        temp_score = self.now_money_USDT + self.now_money_USDT * self.start_price + self.calculate_money_in_orders()
+        temp_score = self.now_money_USDT + self.now_money_CRYP * self.start_price + self.calculate_money_in_orders()
         reward = temp_score - self.now_score
         self.now_score = temp_score
         return reward
@@ -277,21 +305,31 @@ class EnvironmentGateIO:
         i = 0
         while i < len(self.orders):
             if self.orders[i].check(self.now_price):
-                self.success_orders.append(self.orders.pop(i))
-                if self.orders[i].sell_by:
+                if self.orders[i].sell_buy:
                     self.now_money_USDT += self.orders[i].qtty - self.orders[i].qtty * fee
                 else:
                     self.now_money_CRYP += self.orders[i].qtty / self.now_price - \
                                            (self.orders[i].qtty / self.now_price) * fee
+                self.success_orders.append(self.orders.pop(i))
+                i -= 1
             i += 1
 
     def check_time_intervals_momentum(self):
-        times = np.array(self.moment.file_list)[:, 1]
-        for i in range(len(times) - self.time_interval-1):
-            check = False
-            for k in range(self.time_interval):
-                if times[i+self.time_interval-k+1] - times[i+self.time_interval-k]> 8:
-                    check = True
-            if check is False:
-                self.time_can_use.append(i+self.time_interval)
+        if os.path.isfile("time_can_use.json"):
+            print("Warning!!! Loading old times")
+            with open("time_can_use.json", 'r') as file:
+                self.time_can_use = list(json.load(file))
+        else:
+            print("Warning!!! Processing new times")
+            times = np.array(self.moment.file_list)[:, 1]
+            for i in range(len(times) - self.time_interval-1):
+                check = False
+                for k in range(self.time_interval):
+                    if times[i+self.time_interval-k+1] - times[i+self.time_interval-k]> 8:
+                        check = True
+                if check is False:
+                    self.time_can_use.append(times[i+self.time_interval])
+            with open("time_can_use.json", 'w') as file:
+                json.dump(self.time_can_use, file)
+        print("We can use ", len(self.time_can_use), " intervals")
 

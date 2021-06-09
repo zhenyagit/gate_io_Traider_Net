@@ -13,22 +13,25 @@ import datetime
 
 
 class OnlyNet:
-    def __init__(self, model_folder):
+    def __init__(self, model_folder, index_file=None):
         self.model_folder = model_folder
-        self.model = self.model_from_h5()
+        self.model = self.model_from_h5(index_file)
 
-    def model_from_h5(self):
+    def model_from_h5(self, index_file=None):
         list_model = os.listdir(self.model_folder)
-        for i in range(len(list_model)):
-            print(i, '\t', list_model[i])
-        print("Enter index model to predict")
-        model_index = int(input())
+        if index_file is None:
+            for i in range(len(list_model)):
+                print(i, '\t', list_model[i])
+            print("Enter index model to predict")
+            model_index = int(input())
+        else:
+            model_index = index_file
         return load_model(self.model_folder + list_model[model_index])
 
     def prediction(self, x):
-        x = np.array(x)
+        x = np.array([x])
         u = np.reshape(x, (x.shape[0], x.shape[1], 1))
-        y = self.model.predict(u)
+        y = self.model.predict(x)[0][0]
         return y
 
 
@@ -207,7 +210,9 @@ class LSTMPredictorTrainer:
         for i in range(40):
             number_to_try = i + 20
             x = np.array([self.train_data[number_to_try]])
+            print(x.shape)
             u = np.reshape(x, (x.shape[0], x.shape[1], 1))
+            print(u.shape)
             y = self.model.predict(u)
             plt.plot(range(170, self.inp_len), self.train_data[number_to_try][170:], color='b', label='Train')
             plt.plot(range(self.inp_len, self.inp_len + self.out_len),
@@ -226,6 +231,6 @@ class LSTMPredictorTrainer:
         print(valid_data.shape)
         self.model.fit(train_data, valid_data, batch_size=32, epochs=50, callbacks=self.model_callbacks)
 
-net = LSTMPredictorTrainer(default_model_folder='./models/fitted1h/', default_data_folder='./1h/', inp_len=180, out_len=1, timestap=60*60)
-# net = LSTMPredictorTrainer(default_model_folder='./models/fitted5m/', default_data_folder='./5m/', inp_len=180, out_len=1, timestap=60*5)
-net.what_we_do()
+#net = LSTMPredictorTrainer(default_model_folder='./models/fitted1h/', default_data_folder='./1h/', inp_len=180, out_len=1, timestap=60*60)
+#net = LSTMPredictorTrainer(default_model_folder='./models/fitted5m/', default_data_folder='./5m/', inp_len=180, out_len=1, timestap=60*5)
+#net.what_we_do()

@@ -15,8 +15,6 @@ class PolicyGradientNetwork(keras.Model):
     def call(self, state):
         value = self.fc1(state)
         value = self.fc2(value)
-
         pi = self.pi(value)
-
         return pi
 
