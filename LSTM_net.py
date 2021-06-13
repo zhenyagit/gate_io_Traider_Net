@@ -28,11 +28,14 @@ class OnlyNet:
             model_index = index_file
         return load_model(self.model_folder + list_model[model_index])
 
-    def prediction(self, x):
+    def one_prediction(self, x):
         u = np.reshape(x, (1, x.shape[0], 1))
-        y = self.model.predict(x)[0][0]
+        y = self.model.predict(u)[0][0]
         return y
 
+    def many_predictions(self, x):
+        y = self.model.predict(x)
+        return y
 
 class LSTMPredictorTrainer:
     def __init__(self, default_model_folder='./fitted/', default_data_folder='./data/', inp_len=180, out_len=1, timestap=10, testfile="10s-test.json"):

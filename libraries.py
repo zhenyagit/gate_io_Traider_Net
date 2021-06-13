@@ -4,18 +4,8 @@ import json
 import numpy as np
 import random
 from LSTM_net import OnlyNet
-import cProfile
-
-def profile(func):
-    """Decorator for run function profile"""
-    def wrapper(*args, **kwargs):
-        profile_filename = func.__name__ + '.prof'
-        profiler = cProfile.Profile()
-        result = profiler.runcall(func, *args, **kwargs)
-        profiler.dump_stats(profile_filename)
-        return result
-    return wrapper
-
+from line_profiler_pycharm import profile
+from functools import  lru_cache
 
 class CandlestickDataCollectorLSTM:
     def __init__(self, data_folder="./10s/", model_folder="./models/fitted10s/", index_file=None, inp_len=180, out_len=1):
@@ -28,10 +18,17 @@ class CandlestickDataCollectorLSTM:
         # self.draw_array_candlestick(self.ret_data_to_LSTM(time=1622548887))
         self.model_folder = model_folder
         self.net = OnlyNet(self.model_folder, index_file)
+        self.time_prediction = None
+        self.check_times_predictions()
         # self.draw_momentum_data()
 
     def ret_raw_data(self):
         return self.raw_data
+
+    def check_times_predictions(self):
+        if os.path.isfile(self.model_folder + "time_prediction.json"):
+            with open(self.model_folder + "time_prediction.json", 'r') as file:
+                self.time_prediction = np.array(json.load(file))
 
     def get_full_from_folder(self, path_to_folder=None):
         if path_to_folder is None:
@@ -51,19 +48,60 @@ class CandlestickDataCollectorLSTM:
         self.raw_data = np.array(full_array)[:, 2]
         self.raw_data_times = np.array(full_array)[:, 0]
 
+    def nearest_value(self, time):
+        lenth = len(self.raw_data_times)
+        lenth = round(lenth/2)
+        x = lenth
+        while lenth > 1:
+            lenth = round(lenth / 2)
+            if self.raw_data_times[x] == time:
+                break
+            if self.raw_data_times[x] > time:
+                x = x - lenth
+            else:
+                x = x + lenth
+        func = np.vectorize(lambda x: abs(x - time))
+        delta = func(self.raw_data_times[x-5:x+5])
+        index = np.argmin(delta)+x-5
+        return index
+#1702062464
+#  12560801
+    @lru_cache
+    @profile
     def ret_data_to_LSTM(self, time, array_full=None):
         if array_full is None:
             array_full = self.raw_data
-        func = np.vectorize(lambda x: abs(x - time))
-        delta = func(self.raw_data_times)
-        index = np.argmin(delta)
+        index = self.nearest_value(time)
         ret_array = array_full[index - self.inp_len - 1:index]
         new_arr = ret_array[:-1] - ret_array[1:]
         return new_arr
+#2136143616
+# 496405504
+    @profile
+    def generate_full_to_LSTM(self, times):
+        full_data = np.empty(shape=(len(times), len(self.ret_data_to_LSTM(times[0]))))
+        for i in range(len(times)):
+            full_data[i] = self.ret_data_to_LSTM(times[i])
+        full_data = np.reshape(full_data, (full_data.shape[0], full_data.shape[1], 1))
+        predictions = self.net.many_predictions(full_data)
+        self.time_prediction = np.empty(shape=(2, len(times)))
+        self.time_prediction[0] = np.array(times)
+        self.time_prediction[1] = np.reshape(predictions, (len(times)))
+        with open(self.model_folder + "time_prediction.json", 'w') as file:
+            json.dump(self.time_prediction.tolist(), file)
 
     def prediction_LSTM(self, time):
-        x = self.ret_data_to_LSTM(time)
-        return self.net.prediction(x)
+        if self.time_prediction is None:
+            x = self.ret_data_to_LSTM(time)
+            return self.net.one_prediction(x)
+        else:
+            index = np.where(self.time_prediction[0] == time)
+            try:
+                temp = self.time_prediction[1, index[0][0]]
+            except Exception:
+                x = self.ret_data_to_LSTM(time)
+                temp = self.net.one_prediction(x)
+            return temp
 
     @staticmethod
     def convert_to_LSTM(array, data_to_take=2):
@@ -76,30 +114,38 @@ class CandlestickDataCollectorLSTM:
         plt.show()
 
 
+class Loger:
+    def __init__(self):
+        self.full_data = []
+
+    def add(self, data):
+        self.full_data.append(data)
+
+    def write(self, time, path="./env_log/"):
+        with open(path + "log-" + str(time) + ".json", 'w') as file:
+            json.dump(self.full_data, file)
+
 
 class MomentumData:
+    @profile
     def __init__(self, time, asks, bids, price):
         self.time = time
-        self.asks = np.array(asks)
-        self.bids = np.array(bids)
+        self.asks = asks
+        self.bids = bids
         self.price = price
-        self.asks_div, self.asks_sum = self.ret_div_sum_data(self.asks)
-        self.bids_div, self.bids_sum = self.ret_div_sum_data(self.bids)
+        self.asks_div, self.asks_sum = self.ret_div_sum_data()
+        self.bids_div, self.bids_sum = self.ret_div_sum_data()
         self.asks_mean, self.asks_disp = self.ret_mean_disp_data(self.asks, self.asks_div)
         self.bids_mean, self.bids_disp = self.ret_mean_disp_data(self.bids, self.bids_div)
 
-    def ret_div_sum_data(self, array):
+    def ret_div_sum_data(self):
         copy_val = self.asks[:, 1]
         summ = np.sum(copy_val)
         return copy_val/summ, summ
 
     def ret_mean_disp_data(self, full_arr, array_div):
-        mean = 0
-        for i in range(len(array_div)):
-            mean += full_arr[i][0] * array_div[i]
-        disp = 0
-        for i in range(len(array_div)):
-            disp += full_arr[i][0] * full_arr[i][0] * array_div[i]
+        mean = np.sum(full_arr[:, 0] * array_div[:])
+        disp = np.sum(full_arr[:, 0] * full_arr[:, 0] * array_div[:])
         disp = disp - mean * mean
         return mean, disp
 
@@ -108,36 +154,38 @@ class MomentumDataCollector:
     def __init__(self, data_folder="./momentum/"):
         self.data_folder = data_folder
         self.file_list = None
+        self.file_names = None
         self.get_file_list()
 
     def get_file_list(self):
-        name_of_files = os.listdir(self.data_folder)
+        self.file_names = os.listdir(self.data_folder)
         temp = []
-        for item in name_of_files:
+        for item in self.file_names:
             two = item.split("-")
             temp.append([float(two[0]), int(two[1][0:10])])
         temp = sorted(temp, key=lambda time: time[1])
-        self.file_list = temp
+        self.file_list = np.array(temp)
+#19281292
+# 3580401
 
+    @profile
     def ret_momentum(self, time, array=None):
         if array is None:
             array = self.file_list
         func = np.vectorize(lambda x: abs(x - time))
-        delta = func(np.array(array)[:, 1])
+        delta = func(array[:, 1])
         index = np.argmin(delta)
-        if (array[index][0] % 1) == 0.0:
-            array[index][0] = int(array[index][0])
-        file_name = str(array[index][0]) + "-" + str(array[index][1]) + ".json"
+        file_name = self.file_names[index]
         raw_asks, raw_bids = self.ret_file_data(file_name)
-        temp = []
-        for item in raw_asks:
-            temp.append([float(item[0]), float(item[1])])
-        asks = temp
-        temp = []
-        for item in raw_bids:
-            temp.append([float(item[0]), float(item[1])])
-        bids = temp
-        return MomentumData(np.array(array)[index, 1], asks, bids, np.array(array)[index, 0])
+        asks = np.empty(shape=(len(raw_asks), 2))
+        for i in range(len(raw_asks)):
+            asks[i, 0] = float(raw_asks[i][0])
+            asks[i, 1] = float(raw_asks[i][1])
+        bids = np.empty(shape=(len(raw_asks), 2))
+        for i in range(len(raw_bids)):
+            bids[i, 0] = float(raw_bids[i][0])
+            bids[i, 1] = float(raw_bids[i][1])
+        return MomentumData(array[index, 1], asks, bids, array[index, 0])
 
     def ret_file_data(self, name_file):
         with open(self.data_folder + name_file, 'r') as file:
@@ -172,6 +220,7 @@ class Order:
                 self.success = True
         return self.success
 
+
 class EnvironmentGateIO:
     def __init__(self, money_USDT, money_CRYP,  time_interval=60*60*2, momentum_folder="./momentum/",
                  days_folder='./1d/', hours_folder='./1h/', minutes_folder='./5m/', seconds_folder='./10s/',
@@ -205,10 +254,12 @@ class EnvironmentGateIO:
         self.orders = []
         self.success_orders = []
         self.time_can_use = []
+        self.loger = None
         print("Start check intervals")
         self.check_time_intervals_momentum()
         print("Stop check intervals")
 
+    @profile
     def reset(self):
         self.orders = []
         self.success_orders = []
@@ -222,19 +273,31 @@ class EnvironmentGateIO:
         self.now_score = 0
         self.calculate_reward_score()
         self.start_score = self.now_score
+        print("Generating all predictions")
+        self.candle1h.generate_full_to_LSTM(range(int(self.start_time), int(self.start_time) + self.time_interval+4))
+        self.candle5m.generate_full_to_LSTM(range(int(self.start_time), int(self.start_time) + self.time_interval+4))
+        self.candle10s.generate_full_to_LSTM(range(int(self.start_time), int(self.start_time) + self.time_interval+4))
+        print("Done")
         observ = self.generate_observation()
+        # if self.loger is None:
+        #     self.loger = Loger()
+        # else:
+        #     self.loger.write(self.now_time)
+        #     self.loger = Loger()
         return observ
 
     def buy(self, qtty=1):
         if self.now_money_USDT >= qtty:
             self.now_money_USDT -= qtty
-        self.orders.append(Order(self.now_time, self.now_price, qtty, False))
+            self.orders.append(Order(self.now_time, self.now_price, qtty, False))
 
     def sell(self, qtty=1):
         if self.now_money_CRYP*self.now_price >= qtty:
             self.now_money_CRYP -= qtty / self.now_price
-        self.orders.append(Order(self.now_time, self.now_price, qtty, True))
-
+            self.orders.append(Order(self.now_time, self.now_price, qtty, True))
+# 6516762
+#  949263
+    @profile
     def step(self, action):
         self.check_orders()
         if action == 0:
@@ -243,20 +306,25 @@ class EnvironmentGateIO:
             self.buy()
         if action == 2:
             pass
-        self.now_time += 1
+        self.now_time += 3
+        if self.now_time > self.start_time + self.time_interval:
+            self.now_time = self.start_time + self.time_interval
         reward = self.calculate_reward_score()
         observation = self.generate_observation()
         done = self.check_done()
         info = self.calculate_progress()
+        # self.loger.add([action, observation.tolist(), reward, info])
         return observation, reward, done, info
 
     def check_done(self):
-        return self.now_time > self.start_time + self.time_interval
+        return self.now_time >= self.start_time + self.time_interval
 
     def calculate_progress(self):
         progress = (self.now_time - self.start_time) / self.time_interval * 100
         return progress
-
+# 13075640
+#  1911762
+    @profile
     def generate_observation(self):
         self.now_moment = self.moment.ret_momentum(self.now_time)
         self.now_price = self.now_moment.price
